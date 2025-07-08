@@ -1,0 +1,215 @@
+{
+  "name": "Yahoo Finance News AI Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://finance.yahoo.com/news/",
+        "method": "GET",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "http-request-1",
+      "name": "Fetch Yahoo Finance News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Extract news content from HTML\nconst html = $input.item.json.data;\n\n// Simple regex patterns to extract news items\n// Note: In production, consider using HTML parser node\nconst titlePattern = /<h3[^>]*>([^<]+)<\\/h3>/g;\nconst linkPattern = /<a[^>]*href=\"(\\/news\\/[^\"]+)\"/g;\n\nconst titles = [];\nconst links = [];\n\nlet match;\nwhile ((match = titlePattern.exec(html)) !== null) {\n  titles.push(match[1].trim());\n}\n\nwhile ((match = linkPattern.exec(html)) !== null) {\n  links.push('https://finance.yahoo.com' + match[1]);\n}\n\n// Combine titles and links (limit to 10 items)\nconst newsItems = [];\nfor (let i = 0; i < Math.min(10, titles.length); i++) {\n  newsItems.push({\n    title: titles[i],\n    link: links[i] || 'N/A',\n    index: i + 1\n  });\n}\n\nreturn {\n  newsItems: newsItems,\n  totalCount: newsItems.length,\n  scrapedAt: new Date().toISOString()\n};"
+      },
+      "id": "code-extract",
+      "name": "Extract News Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chatCompletion",
+        "model": "gpt-3.5-turbo",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a financial news analyst. Analyze the provided news headlines and create a concise summary report with key insights, market trends, and potential impacts. Format the output in a professional email-ready format."
+            },
+            {
+              "role": "user", 
+              "content": "=Please analyze these Yahoo Finance news headlines and create a summary report:\n\n{{$json.newsItems.map(item => `${item.index}. ${item.title}`).join('\\n')}}\n\nInclude:\n1. Key market themes\n2. Notable companies or sectors mentioned\n3. Potential market impacts\n4. Investment considerations"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 1000
+        }
+      },
+      "id": "openai-node",
+      "name": "AI Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "report_date",
+              "name": "report_date",
+              "type": "string",
+              "value": "={{new Date().toLocaleDateString('en-US', {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'})}}"
+            },
+            {
+              "id": "report_time", 
+              "name": "report_time",
+              "type": "string",
+              "value": "={{new Date().toLocaleTimeString('en-US')}}"
+            },
+            {
+              "id": "news_items",
+              "name": "news_items",
+              "type": "string",
+              "value": "={{$node[\"Extract News Items\"].json.newsItems}}"
+            },
+            {
+              "id": "ai_analysis",
+              "name": "ai_analysis", 
+              "type": "string",
+              "value": "={{$node[\"AI Analysis\"].json.choices[0].message.content}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-data",
+      "name": "Prepare Email Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=Yahoo Finance News Report - {{$json.report_date}}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n    <style>\n        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n        .header { background-color: #563d7c; color: white; padding: 20px; text-align: center; }\n        .content { padding: 20px; }\n        .news-item { margin: 10px 0; padding: 10px; background-color: #f4f4f4; border-left: 4px solid #563d7c; }\n        .analysis { background-color: #e8f4f8; padding: 20px; margin: 20px 0; border-radius: 8px; }\n        .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }\n    </style>\n</head>\n<body>\n    <div class=\"header\">\n        <h1>Yahoo Finance News Report</h1>\n        <p>{{$json.report_date}} at {{$json.report_time}}</p>\n    </div>\n    \n    <div class=\"content\">\n        <h2>📰 Latest Headlines</h2>\n        {{$json.news_items.map(item => `\n        <div class=\"news-item\">\n            <strong>${item.index}.</strong> ${item.title}<br>\n            <a href=\"${item.link}\" style=\"color: #563d7c; text-decoration: none;\">Read more →</a>\n        </div>\n        `).join('')}}\n        \n        <div class=\"analysis\">\n            <h2>🤖 AI Market Analysis</h2>\n            <div style=\"white-space: pre-wrap;\">{{$json.ai_analysis}}</div>\n        </div>\n    </div>\n    \n    <div class=\"footer\">\n        <p>This report was automatically generated by n8n workflow automation.</p>\n        <p>Data source: Yahoo Finance | Analysis: OpenAI GPT-3.5</p>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "email-send",
+      "name": "Send Email Report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1250, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Yahoo Finance News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Yahoo Finance News": {
+      "main": [
+        [
+          {
+            "node": "Extract News Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract News Items": {
+      "main": [
+        [
+          {
+            "node": "AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Prepare Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Email Data": {
+      "main": [
+        [
+          {
+            "node": "Send Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "yahoo-finance-ai-v1",
+  "id": "yahoo-finance-workflow",
+  "tags": [
+    {
+      "name": "finance",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "ai-analysis",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}
